@@ -1,24 +1,74 @@
 const std = @import("std");
+const zap = @import("zap");
 
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+const PythonConnection = struct {
+    conn: std.net.Stream,
+    mutex: std.Thread.Mutex,
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    fn init(path: []const u8) !PythonConnection {
+        return PythonConnection{
+            .conn = try std.net.connectUnixSocket(path),
+            .mutex = std.Thread.Mutex{},
+        };
+    }
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    fn deinit(self: *PythonConnection) void {
+        self.conn.close();
+    }
 
-    try bw.flush(); // don't forget to flush!
+    fn sendAndReceive(self: *PythonConnection, allocator: std.mem.Allocator, message: []const u8) ![]u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        try self.conn.writeAll(message);
+
+        var buffer = try allocator.alloc(u8, 1024); // Adjust size as needed
+        defer allocator.free(buffer);
+
+        const bytes_read = try self.conn.read(buffer);
+        return allocator.dupe(u8, buffer[0..bytes_read]);
+    }
+};
+
+var python_conn: PythonConnection = undefined;
+
+fn on_request(r: zap.Request) void {
+    if (r.path) |the_path| {
+        std.debug.print("PATH: {s}\n", .{the_path});
+    }
+    if (r.query) |the_query| {
+        std.debug.print("QUERY: {s}\n", .{the_query});
+    }
+
+    const allocator = std.heap.page_allocator;
+
+    const response = python_conn.sendAndReceive(allocator, "hello hello") catch |err| {
+        std.debug.print("Error communicating with Python: {s}\n", .{@errorName(err)});
+        r.sendBody("Internal Server Error") catch |send_err| {
+            std.debug.print("Error sending error response: {s}\n", .{@errorName(send_err)});
+        };
+        return;
+    };
+    defer allocator.free(response);
+
+    r.sendBody(response) catch |err| {
+        std.debug.print("Error sending response: {s}\n", .{@errorName(err)});
+    };
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+pub fn main() !void {
+    python_conn = try PythonConnection.init("/tmp/sleek.sock");
+    defer python_conn.deinit();
+
+    var listener = zap.HttpListener.init(.{
+        .port = 3000,
+        .on_request = on_request,
+        .log = true,
+    });
+    try listener.listen();
+    std.debug.print("Listening on 0.0.0.0:3000\n", .{});
+    zap.start(.{
+        .threads = 2,
+        .workers = 2,
+    });
 }
