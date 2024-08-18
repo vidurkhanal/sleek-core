@@ -1,8 +1,8 @@
 const std = @import("std");
-const mem = @import("std").mem;
 const socket = @import("socket.zig");
 const zap = @import("zap");
 const log = std.log;
+const mem = std.mem;
 
 var uc: socket.UnixConnection = undefined;
 

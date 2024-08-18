@@ -1,7 +1,7 @@
 const std = @import("std");
+const http_server = @import("http_server.zig");
 const heap = std.heap;
 const log = std.log;
-const http_server = @import("http_server.zig");
 
 pub fn main() !void {
     var gpa = heap.GeneralPurposeAllocator(.{ .thread_safe = true }){};
@@ -11,5 +11,5 @@ pub fn main() !void {
     }
     // show potential memory leaks when ZAP is shut down
     const has_leaked = gpa.detectLeaks();
-    std.log.debug("Has leaked: {}\n", .{has_leaked});
+    log.debug("Has leaked: {}\n", .{has_leaked});
 }
